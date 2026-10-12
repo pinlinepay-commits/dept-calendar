@@ -21,7 +21,8 @@
     .status-business { background-color: #fef08a !important; border-color: #fde047 !important; color: #854d0e !important; }
     .status-leave { background-color: #fecaca !important; border-color: #fca5a5 !important; color: #991b1b !important; }
 
-    .holiday-cell { background-color: #f3f4f6 !important; }
+    /* 灰底樣式 */
+    .holiday-cell { background-color: #f1f5f9 !important; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
@@ -64,7 +65,7 @@
         <div class="flex items-center space-x-2">
           <span id="sync-status" class="inline-flex items-center text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
             <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse mr-1.5"></span>
-            連線設定中...
+            連線集中...
           </span>
         </div>
 
@@ -93,7 +94,7 @@
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
           <i data-lucide="palmtree" class="w-5 h-5 text-indigo-600"></i>
-          設定當天為假期 / 置灰
+          設定工作日 / 置灰狀態
         </h3>
         <button id="close-holiday-modal" class="text-slate-400 hover:text-slate-600">
           <i data-lucide="x" class="w-5 h-5"></i>
@@ -114,7 +115,7 @@
 
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">假期標籤名稱 (選填)</label>
-          <input type="text" id="holiday-tag-input" placeholder="例如：元旦、端午節、團隊Building" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <input type="text" id="holiday-tag-input" placeholder="例如：補班、團隊Building" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
         </div>
 
         <div class="flex justify-end space-x-2 pt-2">
@@ -129,16 +130,17 @@
     let currentDate = new Date();
     let calendarData = {};
     let activeModalDateKey = null;
+    let fetchedHolidays = {};
 
-    // 請在此處貼上您第一步取得的 Firebase 憑證：
-const firebaseConfig = {
-  apiKey: "AIzaSyBRwWTT8VpO6A8WNz2D6cC-fJBe7a2jQL4",
-  authDomain: "line-pay-video2.firebaseapp.com",
-  projectId: "line-pay-video2",
-  storageBucket: "line-pay-video2.firebasestorage.app",
-  messagingSenderId: "930321776775",
-  appId: "1:930321776775:web:f4c73d787cfcfe2c38b822"
-};
+    // 您的專屬 Firebase 金鑰
+    const firebaseConfig = {
+      apiKey: "AIzaSyBRwWTT8VpO6A8WNz2D6cC-fJBe7a2jQL4",
+      authDomain: "line-pay-video2.firebaseapp.com",
+      projectId: "line-pay-video2",
+      storageBucket: "line-pay-video2.firebasestorage.app",
+      messagingSenderId: "930321776775",
+      appId: "1:930321776775:web:f4c73d787cfcfe2c38b822"
+    };
 
     let db = null;
     let isFirebaseActive = false;
@@ -152,7 +154,42 @@ const firebaseConfig = {
         document.getElementById('sync-status').innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5"></span>雲端即時同步中`;
       }
     } catch (e) {
-      console.log("Firebase 設定無效，使用單機模式");
+      console.log("Firebase 尚未連接");
+    }
+
+    // 網路 API 抓取台灣國定假日
+    async function fetchTaiwanHolidays(year) {
+      if (fetchedHolidays[year]) return;
+
+      try {
+        const response = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/TW`);
+        if (response.ok) {
+          const data = await response.json();
+          fetchedHolidays[year] = {};
+          
+          const nameMap = {
+            "New Year's Day": "元旦",
+            "Chinese New Year": "農曆春節",
+            "Peace Memorial Day": "228和平紀念日",
+            "Children's Day": "兒童節",
+            "Tomb Sweeping Day": "清明節",
+            "Labor Day": "勞動節",
+            "Dragon Boat Festival": "端午節",
+            "Mid-Autumn Festival": "中秋節",
+            "National Day": "國慶日"
+          };
+
+          data.forEach(item => {
+            const dateStr = item.date;
+            const tagName = nameMap[item.name] || item.localName || item.name;
+            fetchedHolidays[year][dateStr] = tagName;
+          });
+
+          renderCalendar();
+        }
+      } catch (err) {
+        console.warn("API 載入失敗，採用預設週末置灰", err);
+      }
     }
 
     function formatDateKey(year, month, day) {
@@ -161,12 +198,27 @@ const firebaseConfig = {
       return `${year}-${m}-${d}`;
     }
 
-    function getDayData(dateKey) {
-      return calendarData[dateKey] || {
-        holiday: { isHoliday: false, tag: "" },
-        dept: "",
-        pin: { text: "", status: "normal" },
-        yuanyuan: { text: "", status: "normal" }
+    function getDayData(dateKey, dayOfWeek) {
+      const savedData = calendarData[dateKey] || {};
+      const currentYear = new Date(dateKey).getFullYear();
+      
+      const apiHolidayName = (fetchedHolidays[currentYear] && fetchedHolidays[currentYear][dateKey]) ? fetchedHolidays[currentYear][dateKey] : '';
+      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+      
+      const defaultIsHoliday = (!!apiHolidayName || isWeekend);
+      const isHoliday = (savedData.holiday && savedData.holiday.isHoliday !== undefined) 
+                        ? savedData.holiday.isHoliday 
+                        : defaultIsHoliday;
+
+      const tag = (savedData.holiday && savedData.holiday.tag !== undefined) 
+                  ? savedData.holiday.tag 
+                  : (apiHolidayName || '');
+
+      return {
+        holiday: { isHoliday, tag },
+        dept: savedData.dept || "",
+        pin: savedData.pin || { text: "", status: "normal" },
+        yuanyuan: savedData.yuanyuan || { text: "", status: "normal" }
       };
     }
 
@@ -180,6 +232,8 @@ const firebaseConfig = {
     function renderCalendar() {
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
+
+      fetchTaiwanHolidays(year);
 
       document.getElementById('current-month-display').innerText = `${year} 年 ${month + 1} 月`;
 
@@ -197,10 +251,11 @@ const firebaseConfig = {
       const today = new Date();
       for (let day = 1; day <= daysInMonth; day++) {
         const dateKey = formatDateKey(year, month, day);
-        const dayData = getDayData(dateKey);
+        const dayOfWeek = new Date(year, month, day).getDay();
+        const dayData = getDayData(dateKey, dayOfWeek);
         const isToday = today.getFullYear() === year && today.getMonth() === month && today.getDate() === day;
         
-        grid.appendChild(createDateCell(year, month, day, dateKey, dayData, isToday));
+        grid.appendChild(createDateCell(year, month, day, dateKey, dayData, isToday, dayOfWeek));
       }
 
       const totalCellsSoFar = firstDayOfMonth + daysInMonth;
@@ -219,33 +274,35 @@ const firebaseConfig = {
       return cell;
     }
 
-    function createDateCell(year, month, day, dateKey, dayData, isToday) {
+    function createDateCell(year, month, day, dateKey, dayData, isToday, dayOfWeek) {
       const cell = document.createElement('div');
       const isHoliday = dayData.holiday && dayData.holiday.isHoliday;
       
-      cell.className = `bg-white p-2 min-h-[150px] rounded-lg flex flex-col justify-between transition-all relative border border-slate-200/80 shadow-sm hover:shadow-md ${isHoliday ? 'holiday-cell' : ''}`;
+      const cellBgClass = isHoliday ? 'holiday-cell' : 'bg-white';
+
+      cell.className = `${cellBgClass} p-2 min-h-[150px] rounded-lg flex flex-col justify-between transition-all relative border border-slate-200/80 shadow-sm hover:shadow-md`;
 
       const header = document.createElement('div');
       header.className = 'flex items-center justify-between mb-1.5';
 
       const dateNum = document.createElement('div');
-      dateNum.className = 'flex items-center space-x-1.5';
+      dateNum.className = 'flex items-center space-x-1.5 flex-wrap gap-y-1';
       
       const daySpan = document.createElement('span');
       daySpan.className = `text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-indigo-600 text-white' : 'text-slate-700'}`;
       daySpan.innerText = day;
       dateNum.appendChild(daySpan);
 
-      if (isHoliday && dayData.holiday.tag) {
+      if (dayData.holiday.tag) {
         const tagSpan = document.createElement('span');
-        tagSpan.className = 'text-[10px] font-bold bg-slate-600 text-white px-1.5 py-0.5 rounded shadow-sm';
+        tagSpan.className = 'text-[10px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded shadow-sm';
         tagSpan.innerText = dayData.holiday.tag;
         dateNum.appendChild(tagSpan);
       }
 
       const holidayBtn = document.createElement('button');
       holidayBtn.className = 'text-slate-400 hover:text-slate-600 p-0.5 rounded transition opacity-60 hover:opacity-100';
-      holidayBtn.title = "設定假期/置灰";
+      holidayBtn.title = "點擊可自由切換【灰底(休假)】與【白底(工作日)】";
       holidayBtn.innerHTML = `<i data-lucide="settings" class="w-3.5 h-3.5"></i>`;
       holidayBtn.onclick = () => openHolidayModal(dateKey, dayData.holiday);
 
@@ -255,13 +312,13 @@ const firebaseConfig = {
       const content = document.createElement('div');
       content.className = 'flex-1 flex flex-col space-y-1.5 text-xs';
 
-      // 部門排程 (固定在最上方)
+      // 部門專案
       const deptInput = document.createElement('input');
       deptInput.type = 'text';
       deptInput.placeholder = '＋ 部門 Deadline / 專案';
       deptInput.value = dayData.dept || '';
       deptInput.className = `w-full text-xs px-2 py-1 rounded font-semibold transition border border-dashed focus:border-solid border-slate-300 focus:ring-1 focus:ring-indigo-500 focus:bg-white focus:outline-none ${
-        dayData.dept ? 'bg-blue-50 text-blue-900 border-blue-200' : 'bg-transparent text-slate-400 opacity-60 hover:opacity-100'
+        dayData.dept ? 'bg-blue-50 text-blue-900 border-blue-200 shadow-sm' : 'bg-transparent text-slate-400 opacity-60 hover:opacity-100'
       }`;
       deptInput.onchange = (e) => {
         dayData.dept = e.target.value.trim();
@@ -339,7 +396,7 @@ const firebaseConfig = {
       document.getElementById('modal-date-title').innerText = `設定日期：${dateKey}`;
       document.getElementById('is-holiday-checkbox').checked = data.isHoliday;
       document.getElementById('holiday-tag-input').value = data.tag || '';
-      document.getElementById('holiday-toggle-text').innerText = data.isHoliday ? '灰底 (非工作日/假期)' : '一般工作日';
+      document.getElementById('holiday-toggle-text').innerText = data.isHoliday ? '灰底 (非工作日/假期)' : '白底 (一般工作日)';
 
       document.getElementById('holiday-modal').classList.remove('hidden');
       document.getElementById('holiday-modal').classList.add('flex');
@@ -352,7 +409,7 @@ const firebaseConfig = {
     }
 
     document.getElementById('is-holiday-checkbox').onchange = (e) => {
-      document.getElementById('holiday-toggle-text').innerText = e.target.checked ? '灰底 (非工作日/假期)' : '一般工作日';
+      document.getElementById('holiday-toggle-text').innerText = e.target.checked ? '灰底 (非工作日/假期)' : '白底 (一般工作日)';
     };
 
     document.getElementById('save-holiday-btn').onclick = () => {
@@ -360,7 +417,7 @@ const firebaseConfig = {
       const isHoliday = document.getElementById('is-holiday-checkbox').checked;
       const tag = document.getElementById('holiday-tag-input').value.trim();
 
-      const dayData = getDayData(activeModalDateKey);
+      const dayData = getDayData(activeModalDateKey, new Date(activeModalDateKey).getDay());
       dayData.holiday = { isHoliday, tag };
       
       saveData(activeModalDateKey, dayData);
