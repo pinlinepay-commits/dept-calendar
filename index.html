@@ -130,7 +130,7 @@
     let currentDate = new Date();
     let calendarData = {};
     let activeModalDateKey = null;
-    let fetchedHolidays = {};
+    let fetchedHolidays = {}; // 存放行政院人事行政總處開放資料
 
     // 您的專屬 Firebase 金鑰
     const firebaseConfig = {
@@ -157,38 +157,29 @@
       console.log("Firebase 尚未連接");
     }
 
-    // 網路 API 抓取台灣國定假日
-    async function fetchTaiwanHolidays(year) {
+    // 🌐 介接中華民國行政院人事行政總處「政府行政機關辦公日曆表」資料庫
+    async function fetchTaiwanGovCalendar(year) {
       if (fetchedHolidays[year]) return;
 
       try {
-        const response = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/TW`);
+        const response = await fetch(`https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data/${year}.json`);
         if (response.ok) {
           const data = await response.json();
           fetchedHolidays[year] = {};
-          
-          const nameMap = {
-            "New Year's Day": "元旦",
-            "Chinese New Year": "農曆春節",
-            "Peace Memorial Day": "228和平紀念日",
-            "Children's Day": "兒童節",
-            "Tomb Sweeping Day": "清明節",
-            "Labor Day": "勞動節",
-            "Dragon Boat Festival": "端午節",
-            "Mid-Autumn Festival": "中秋節",
-            "National Day": "國慶日"
-          };
 
           data.forEach(item => {
-            const dateStr = item.date;
-            const tagName = nameMap[item.name] || item.localName || item.name;
-            fetchedHolidays[year][dateStr] = tagName;
+            // 解析日期格式 (例如 "20260101" -> "2026-01-01")
+            const dateStr = `${item.date.substring(0,4)}-${item.date.substring(4,6)}-${item.date.substring(6,8)}`;
+            fetchedHolidays[year][dateStr] = {
+              isHoliday: item.isHoliday,
+              description: item.description || ''
+            };
           });
 
           renderCalendar();
         }
       } catch (err) {
-        console.warn("API 載入失敗，採用預設週末置灰", err);
+        console.warn("無法取得行政院行事曆資料，將依據預設週末置灰", err);
       }
     }
 
@@ -202,17 +193,23 @@
       const savedData = calendarData[dateKey] || {};
       const currentYear = new Date(dateKey).getFullYear();
       
-      const apiHolidayName = (fetchedHolidays[currentYear] && fetchedHolidays[currentYear][dateKey]) ? fetchedHolidays[currentYear][dateKey] : '';
+      const govData = (fetchedHolidays[currentYear] && fetchedHolidays[currentYear][dateKey]) 
+                        ? fetchedHolidays[currentYear][dateKey] 
+                        : null;
+
       const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
       
-      const defaultIsHoliday = (!!apiHolidayName || isWeekend);
+      // 預設狀態優先採用行政院行事曆資料；若尚未載入則以週末為準
+      const defaultIsHoliday = govData ? govData.isHoliday : isWeekend;
+      const defaultTag = govData ? govData.description : '';
+
       const isHoliday = (savedData.holiday && savedData.holiday.isHoliday !== undefined) 
                         ? savedData.holiday.isHoliday 
                         : defaultIsHoliday;
 
       const tag = (savedData.holiday && savedData.holiday.tag !== undefined) 
                   ? savedData.holiday.tag 
-                  : (apiHolidayName || '');
+                  : defaultTag;
 
       return {
         holiday: { isHoliday, tag },
@@ -233,7 +230,8 @@
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
 
-      fetchTaiwanHolidays(year);
+      // 自動抓取行政院該年度行事曆
+      fetchTaiwanGovCalendar(year);
 
       document.getElementById('current-month-display').innerText = `${year} 年 ${month + 1} 月`;
 
@@ -293,6 +291,7 @@
       daySpan.innerText = day;
       dateNum.appendChild(daySpan);
 
+      // 行政院官方節日標籤 (紅底白字)
       if (dayData.holiday.tag) {
         const tagSpan = document.createElement('span');
         tagSpan.className = 'text-[10px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded shadow-sm';
@@ -302,7 +301,7 @@
 
       const holidayBtn = document.createElement('button');
       holidayBtn.className = 'text-slate-400 hover:text-slate-600 p-0.5 rounded transition opacity-60 hover:opacity-100';
-      holidayBtn.title = "點擊可自由切換【灰底(休假)】與【白底(工作日)】";
+      holidayBtn.title = "點擊可自由切換【灰底(非工作日)】與【白底(一般工作日)】";
       holidayBtn.innerHTML = `<i data-lucide="settings" class="w-3.5 h-3.5"></i>`;
       holidayBtn.onclick = () => openHolidayModal(dateKey, dayData.holiday);
 
